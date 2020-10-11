@@ -1,0 +1,11 @@
+version: '3'
+services:
+  go:
+    image: golang:latest
+    container_name: 'hello-go'
+    volumes:
+        - ./go:/usr/go
+    working_dir: /usr/go
+    command: [go, run, main.go]
+    ports:
+        - 8000:8000
