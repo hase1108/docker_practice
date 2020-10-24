@@ -1,4 +1,4 @@
-# DockerFile入門
+# DockerFileハンズオン
 
 ## DockerFfileとは
 
@@ -29,12 +29,17 @@ ENTRYPOINT [ "/usr/sbin/httpd","-DFOREGROUND"] (4)
 
 これを``Dockerfile``というファイル名で適当なディレクトリに保存し、そのディレクトリ階層で以下のコマンドを実行することでイメージをビルドする。  
 
-``docker build -t centos:apache .``
+```bash
+docker build -t centos:apache .
+```
 
 コマンドラインに各種情報が流れるが、``docker images``でcentos:apacheが存在すればビルドは成功している。  
 
 以下のコマンドを実行し、コンテナを起動する。
-``docker run -itd -p 8081:80 centos:apache``
+
+```bash
+docker run -itd -p 8081:80 centos:apache
+```
 
 ブラウザなどで、``http://127.0.0.1:8081/index.html``にアクセスし、**Hello Apache**が表示されれば成功である。
 
@@ -44,9 +49,9 @@ Dockerfileの構造の前にまずはDockerにおけるビルドに関して解�
 ビルドする際はdocker buildコマンドに**コンテキスト(パス or URL)**と**Dockerfile**の情報を付与して行う。  
 
 コンテキストはDockerのビルドに必要なファイルが存在するパスやURLを示し、通常コンテキストで指定されたパスorURLをルートディレクトリとして、その配下のディレクトリ、ファイルを**全て**Dockerデーモンに送信してビルドを行う。  
-今回のビルドは今回では``docker build -t centos:apache .``というコマンドを実行して行っているが、この場合、コンテキストは``.``つまり現在のディレクトリを指定している。  
+今回のビルドは``docker build -t centos:apache .``というコマンドを実行しているが、この場合、コンテキストは``.``つまり現在のディレクトリを指定している。  
 また、ディレクトリだけでなくURLなども指定することができるため、githubのリポジトリを指定することができる。  
-この時、内部的にはリポジトリのクローンを取得している。  
+この時、内部的にはリポジトリのクローンを行い、ファイルなどを取得している。  
 また、Dockerfileの情報を与えていないが、オプションなどで指定しない場合、コンテキストのルートディレクトリに保存されている``Dockerfile``という名称のファイルを探して自動的に使用する。  
 URLを指定してリポジトリのクローンを取得した場合は、そのリポジトリのルートにあるDockerfileを使用する。  
 パスを指定した時、Dockerfileを別の名称やディレクトリなどに保存して利用したい場合は``-f``オプションを利用することができる。  
@@ -169,3 +174,70 @@ RUNコマンドでビルド時に様々なコマンドを実行する場合、�
 この場合、Dockerで開発している場合はプログラムのビルド環境のコンテナと実行環境やテスト環境のコンテナを用意する場合はそれぞれのDockerfileを作成、保守する必要があり、効率的ではない。  
 マルチステージビルド機能を利用する場合、同一のDockerfile内に複数のステージのイメージの記述が可能になり、イメージサイズの低減、細やかなコンテナイメージの作成が可能になる。  
 
+##### 利用方法
+ 
+今回はgoのビルドを行う環境とgoの実行環境を分離する形のマルチステージビルドを行うこととする。  
+なお、記述するGoのソースコードやDockerfileの内容はdocker-composeハンズオンとほぼ同じである。  
+今回のディレクトリ構成は以下のようになる。  
+
+```
+go
+  ┣ Dockerfile
+  ┗ src
+    ┗ main.go
+```
+
+Dockerfileでは、``ビルドステージ``を定義し、main.goファイルをビルドするイメージ、runステージでそのビルド済みバイナリを実行するイメージをそれぞれ記述する必要がある。  
+なお、利用するmain.goは以下のようになる。  
+
+Goのソースコードである``main.go``は以下のようになる。
+
+```go
+package main
+
+import (
+    "fmt"
+    "net/http"
+)
+
+func handler(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprint(w, "Hello World")
+}
+
+func main() {
+    http.HandleFunc("/", handler)
+    http.ListenAndServe(":8000", nil)
+}
+
+```
+
+Dockerfileは以下のようになる。
+
+```docker
+FROM golang:latest AS build　//(1)
+
+COPY ./src/main.go /usr/go/src/
+WORKDIR /usr/go/src
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build main.go
+
+FROM alpine:latest as run //(2)
+
+COPY --from=build /usr/go/src/main /usr/go/main  //(3)
+WORKDIR /usr/go
+CMD ["./main"]
+```
+
+|項番|概要|
+|:--|:--|
+|1|goのビルドを行うステージを定義する|
+|2|実際にビルドされたバイナリファイルを実行するステージを定義する|
+|3|ビルドステージでビルドしたバイナリを実行ステージにコピーする|
+
+実際にビルドする際は以下のコマンドを実行する。
+
+```bash
+docker build --target <stage> -t <イメージ名>:<タグ>.
+```
+
+これでgorunイメージからコンテナを作成し、起動し``http://localhost:8000/``にアクセスするとレスポンスが返却されることがわかり、マルチステージビルドが成功していることがわかる。  
+なお、コンテナ起動時には``-p``オプションを付与し、ポートのバインディングを行うこと。  

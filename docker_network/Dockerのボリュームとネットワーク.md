@@ -1,6 +1,197 @@
-# Dockerのネットワーク
+# Dockerのボリュームとネットワークハンズオン
 
 ## 概要
+
+Dockerに入門するにあたり、少しとっつきにくいボリュームとネットワークに関して、実際の操作を交えながら解説する。
+
+## ボリューム
+
+### 概要
+
+別章でも解説したように、基本的にコンテナはホストOSや他のコンテナなどとは分離しており、コンテナ内部のデータ等も独立している。  
+そのため、コンテナを削除した場合、コンテナ内部のデータは全て削除し、復元することが出来ない。  
+そのため本節ではDockerの機能を用いてデータをコンテナやホストOSと共有するする手法について解説する。  
+
+### 種類
+
+Dockerの機能として、ディレクトリやファイルの共有などは以下の3種類で行う。
+
+- bind mount
+- volume
+- tmpfs mount
+
+この中で特に利用頻度の高い``bind mount``および``volume``と解説と簡単なハンズオンを記述する。  
+なお、``tmpfs mount``に関しては簡単な概要のみ紹介する。  
+
+更に応用編として、以下の二つの手法を紹介をする。  
+
+- 複数のコンテナによるvolumeの提供
+- データ専用コンテナ
+
+### bind mount
+
+bind mountは以下の図に示すように、ホストOS上の任意のディレクトリを指定して、コンテナにマウントすることができる仕組みである。  
+後述のvolumeと異なり、Dockerホストが管理しているディレクトリ配下でなくてよいことが特徴である。  
+ただし、ホストOSのファイルシステムに依存してしまう。  
+また、コンテナ上のマウントポイント配下に既にファイルが存在した場合、マウントするとコンテナ側のディレクトリが上書きされてしまうことに注意が必要である。  
+
+![図1.bind mount](./image/bind_mount.png)
+
+参考:https://matsuand.github.io/docs.docker.jp.onthefly/storage/bind-mounts/
+
+#### 使い方
+
+まずはホストOS側の適当の適当な位置にディレクトリ及びファイルを作成する。  
+今回は``~/Documents``にtestフォルダと適当な中身を記述したtest.txtを作成した。  
+
+そして以下のコマンドを実行し、マウントされているかを確認する。  
+
+```bash
+docker run -it --name <コンテナ名> --mount type=bind,src=<testディレクトリまでのパス>/test,dst=/usr/mount centos /bin/bash
+```
+
+上記コマンドでは記述にあるように、typeとしてbind mountを設定し、ホストOS側のディレクトリをsrcに、マウント先をdstに設定する。  
+コンテナ起動と同時にコンテナにログインした状態になるため、操作を行うと``/usr/mount``ディレクトリ配下に``test.txt``が存在することが確認でき、マウントが成功していることがわかる。  
+
+```bash
+docker container inspect <コンテナ名>
+```
+
+上記コマンドを実行すると、以下の情報が出力され指定通りにbind mountされていることがわかる。
+
+```json
+ "Mounts": [
+            {
+                "Type": "bind",
+                "Source": "/run/desktop/mnt/host/c/Users/hase1/Documents/test",
+                "Destination": "/usr/mount",
+                "Mode": "",
+                "RW": true,
+                "Propagation": "rprivate"
+            }
+        ],
+```
+
+### volume
+
+volumeはbind mountと同様にホストOS上のディレクトリをコンテナにマウントすること自体は変わらないが、そのディレクトリをDocker自体が管理していることが大きく異なる。  
+その恩恵として以下のメリットが上げられる。  
+ 
+- バックアップや移行が簡単
+- DockerCliやAPIを用いてvolumeを管理可能
+- 複数コンテナ間で安全に共有可能になる
+
+Dockerからはvolumeの方が多くの場合適切であるとされている。  
+
+なお、実際にvolumeを作成した場合、wsl2の場合は``\\wsl$\docker-desktop-data\version-pack-data\community\docker\volumes``に対象のディレクトリが作成される。
+
+![図2.Volume](./image/Volume.png)
+
+参考:https://matsuand.github.io/docs.docker.jp.onthefly/storage/volumes/
+
+#### -vと--mountの違い
+
+bind mountでは、マウント設定を行う方式として``-v``オプション及び``--mount``オプションの両方で指定することができる。  
+ただし、双方の指定方法は少し挙動やオプションの指定方法が異なることに注意が必要である。  
+大きな違いを以下にあげる。
+
+- -vオプションを使った場合、マウント先のファイル、もしくはディレクトリが存在しなかった場合、マウントエンドポイントを自動的に作成する。ただしその場合は常にディレクトリとして作成される
+
+- -mountオプションの場合はエンドポイントを自動的に生成せずにエラーになる
+
+また、オプションの指定方式が違う
+
+- vオプションでは``:``区切りでオプションを指定し、順序が異なると正確に認識してくれない
+
+- mountオプションでは``key=value``区切りで指定でき、またオプションの指定順序が適当でもDocker側で解析してくれる
+
+#### 使い方
+
+bind mountでも同様に、実際にvolumeを利用してみる。  
+利用方法はbind mountとあまり変わらない。  
+以下のコマンドを実行する。  
+
+```bash
+docker run -it --name <コンテナ名> --mount type=volume,src=vol001,dst=/usr/volume centos /bin/bash
+```
+
+上記コマンドを実行することでvolumeの作成とマウントが行われる。  
+bind mountと異なるのは``type=volume``になる点である。  
+
+コンテナ内の``/usr/volume``に移動し、以下のコマンドを実行する。  
+
+```bash
+echo "hello" > test001.txt
+```
+
+これでvolume配下にテキストファイルが生成される。  
+次にコンテナから離脱し、実際にvolumeが作成されているか確認してみる。  
+``docker volume ls``を実行すると、以下のようにボリュームが存在することが確認できる。 
+
+```bash
+DRIVER              VOLUME NAME
+local               vol001
+```
+
+また、bind mount同様``docker container inspect <コンテナ名>``を実行すると以下の情報が得られることからもvolumeの作成がわかる。
+
+```json
+"Mounts": [
+            {
+                "Type": "volume",
+                "Name": "vol001",
+                "Source": "/var/lib/docker/volumes/vol001/_data",
+                "Destination": "/usr/volume",
+                "Driver": "local",
+                "Mode": "z",
+                "RW": true,
+                "Propagation": ""
+            }
+        ],
+```
+
+ファイルエクスプローラーで``\\wsl$\docker-desktop-data\version-pack-data\community\docker\volumes``を見に行くことでもvolumeの存在が確認でき、先ほど作成したテキストファイルが存在することも確認出来る。
+
+### 読み取り専用
+
+bind mount及びvolumeでは、ホスト側から提供しているディレクトリやファイルに対して、コンテナ側からの権限を指定することが出来る。  
+通常、デフォルトでは読み取り及び書き込みが可能であるが、マウント設定時に``readonly``オプションを指定することで、読み取りのみの権限に設定可能である。
+
+### tmpfs mount
+
+tmpfs mountは今までのVolumeやbind mountとはまったく異なり、コンテナの書き込み先はホストマシンのメモリ上で行われる。  
+メモリ上のデータは他のコンテナとも共有できず、コンテナの停止とともに削除され、他の方式とは異なり保持し続ける事は出来ない。  
+そのため、重要な情報を含んだファイルを一時的に保存するために利用される場合が多い。
+
+### 複数のコンテナによるvolumeの提供
+
+volumeを用いた場合、前述の通り複数のコンテナで簡単にvolumeを共有することができる。  
+実際に共有してみる。  
+
+#### 使い方
+
+前述したvolumeの節で作成したvolumeを別のコンテナで共有してみる。  
+実行方法は簡単で、以下のコマンドを実行する。  
+
+```bash
+docker run -it --name <コンテナ名> --volumes-from <volumeを作成したコンテナ名> centos /bin/bash
+```
+
+``--volumes-from コンテナ名``が重要であり、コンテナ名を指定すると、指定したコンテナと同じvolumeが同じディレクトリにマウントされ、共有される。  
+
+なお、volumeを任意の場所にマウントしたい場合は以下のようにすればよい。
+
+```bash
+docker run -it --name <コンテナ名> --mount type=volume,src=<ボリューム名>,dst=/usr/test centos /bin/bash
+```
+
+### データ専用コンテナ
+
+データの共有化の手法の一つとして、あるコンテナを作成し、そのコンテナを全体の共有データ専用コンテナとして取り扱うことがある。  
+このデータ専用コンテナのメリットとしては、コンテナ内でデータの圧縮、展開処理などを行い、データの可搬性やバックアップ、リストアが容易になるというメリットが上げられる。  
+
+
+## ネットワークの概要
 
 Dockerのコンテナ間の通信を行うにあたり、Dockerでは``link機能``もしくは``コンテナネットワーク``を利用して行うことができる。  
 このうち``link機能``はレガシーな機能であり今後削除される可能性があることから、今回は``コンテナネットワーク``に絞って解説を行う。  
@@ -36,13 +227,14 @@ bridgeネットワークに実際にコンテナを接続して挙動を確認�
 今回は特にコンテナに機能を要求しないので、busyboxイメージを使用してみる。  
 以下のコマンドを実行し、コンテナの立ち上げとコンテナ内のシェルへの接続を行う。  
 
-```
+```bash
 docker run -it busybox /bin/sh
 ```
 
 コンテナへの接続が成功したら``ifconfig``コマンドを実行し、ネットワークを確認してみる。  
 以下に示すように、bridgeネットワーク内のIPアドレスが割り振られ、インターネットに接続されていることがわかる。  
-```
+
+```bash
 eth0      Link encap:Ethernet  HWaddr 02:42:AC:11:00:02
           inet addr:172.17.0.2  Bcast:172.17.255.255  Mask:255.255.0.0
           UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
@@ -54,7 +246,7 @@ eth0      Link encap:Ethernet  HWaddr 02:42:AC:11:00:02
 
 また、コンテナから戻って来て``docker network inspect bridge``コマンドを実行することで、以下のようにbridgeネットワークに先ほどのコンテナが接続されていることがわかる。
 
-```
+```json
 "Containers": {
             "3e5621c72f1a8b39d5508dea3879ba644a03c52ef939a71c28a769bfdd069f06": {
                 "Name": "eager_goldstine",
@@ -71,7 +263,7 @@ eth0      Link encap:Ethernet  HWaddr 02:42:AC:11:00:02
 先ほどのbusyboxは``172.17.0.2``に存在するので``ping -w3 172.17.0.2``でpingが通ることを確認できる。  
 また、先ほどのように``docker network inspect bridge``コマンドを実行することで、以下のようにbridgeネットワークにコンテナが2つ接続されていることがわかる。
 
-```
+```json
        "Containers": {
             "3e5621c72f1a8b39d5508dea3879ba644a03c52ef939a71c28a769bfdd069f06": {
                 "Name": "eager_goldstine",
@@ -97,11 +289,13 @@ hostネットワークは、bridgeネットワークとは異なり、ホスト�
 
 bridgeネットワークとは異なり、前述したように``--net``コマンドでhostネットワークに接続することを設定する為、以下のコマンドを実行する。  
 
-``docker run --net=host -it busybox /bin/sh``
+```bash
+docker run --net=host -it busybox /bin/sh
+```
 
 コンテナに接続した状態で``ifconfig``を実行すると以下のように``eth0``というホストマシンと同様のネットワークインターフェースに接続していることがわかる。
 
-```
+```bash
 eth0      Link encap:Ethernet  HWaddr 02:50:00:00:00:01
           inet addr:192.168.65.3  Bcast:192.168.65.15  Mask:255.255.255.240
           inet6 addr: fe80::50:ff:fe00:1/64 Scope:Link
@@ -114,7 +308,7 @@ eth0      Link encap:Ethernet  HWaddr 02:50:00:00:00:01
 
 コンテナから戻り、``docker network inspect host``を実行すると以下のようにhostネットワークにコンテナが接続されていることがわかる。
 
-```
+```json
  "Containers": {
             "1ce98cf510554d4cb78b5567b21f622beb1bda6e6891cda2ccab43b3a3567ad9": {
                 "Name": "pedantic_sutherland",
@@ -137,7 +331,7 @@ noneネットワークはネットワークドライバが欠如したネット�
 
 このコンテナも前回と同様に``ifconfig``を実行してみると、以下のようにループバックアドレスしか設定されておらず、ネットワークに接続出来ないことがわかる。
 
-```
+```bash
 lo        Link encap:Local Loopback
           inet addr:127.0.0.1  Mask:255.0.0.0
           UP LOOPBACK RUNNING  MTU:65536  Metric:1
@@ -159,7 +353,7 @@ lo        Link encap:Local Loopback
 
 続いて``docker network inspect user_def_network``を実行すると、以下のように任意のサブネットが割り当てられたネットワークが作成されていることがわかる。  
 
-```
+```json
 [
     {
         "Name": "user_def_network",
@@ -201,7 +395,7 @@ lo        Link encap:Local Loopback
 ユーザー定義ネットワークに接続しているため、``--ip``オプションを付与することでコンテナに固定のIPアドレスを割り振る事ができる。  
 コンテナ内で今までと同様に``ifconfig``を実行すると以下のように``172.18.0.10``のIPアドレスが割り振られていることがわかる。
 
-```
+```bash
 eth0      Link encap:Ethernet  HWaddr 02:42:AC:12:00:0A
           inet addr:172.18.0.10  Bcast:172.18.255.255  Mask:255.255.0.0
           UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
@@ -213,10 +407,15 @@ eth0      Link encap:Ethernet  HWaddr 02:42:AC:12:00:0A
 
 更に同様に以下のコマンドを実行し、新しいbusyboxコンテナを作成する。  
 
-``docker run -it --name busybox002 --net user_def_network --ip 172.18.0.11 busybox /bin/sh``
+```bash
+docker run -it --name busybox002 --net user_def_network --ip 172.18.0.11 busybox /bin/sh
+```
 
 busyboxコンテナ間での通信を行う場合、従来ではipアドレスを指定して行うしかできなかったが、ユーザー定義ネットワークでは内部DNSサーバが自動的に用意されるため、コンテナ名での名前解決を行ってくれる。  
 busybox002コンテナ内で以下のコマンドを実行し、名前解決が行われることを確認する。
-``ping -w3 busybox001``
+
+```bash
+ping -w3 busybox001
+```
 
 なお、この名前解決はコンテナ名だけでなく、エイリアスなどをユーザー独自に設定することができる。
